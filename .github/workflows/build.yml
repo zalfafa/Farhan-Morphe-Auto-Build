@@ -42,8 +42,8 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  MORPHE_CLI_VERSION: '1.17.0'
-  MORPHE_CLI_SHA256: '8cf6a9eab4ee9dab146bddc24681897851564f53116baec11f36ba2fa2f589be'
+  MORPHE_CLI_VERSION: '1.19.1'
+  MORPHE_CLI_SHA256: 'a51472252cd63b2eac635dbb5a154ff918bfc15268da89679feb3d760230c573'
 
 jobs:
   setup:
