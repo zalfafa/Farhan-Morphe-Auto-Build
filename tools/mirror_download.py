@@ -17,10 +17,12 @@ from pathlib import Path
 
 try:
     from .apkmirror_browser import download_with_invisible_playwright
+    from .apkmirror_browser import download_with_playwright_firefox
     from .apkmirror_browser import env_bool as browser_env_bool
     from .apkmirror_browser import env_float as browser_env_float
 except ImportError:  # pragma: no cover - direct ``python tools/...`` use
     from apkmirror_browser import download_with_invisible_playwright
+    from apkmirror_browser import download_with_playwright_firefox
     from apkmirror_browser import env_bool as browser_env_bool
     from apkmirror_browser import env_float as browser_env_float
 
@@ -289,8 +291,15 @@ def _apkmirror_browser_requested(mirror):
         return value
     return str(value or "").strip().lower() in {
         "1", "true", "yes", "on", "invisible", "invisible_playwright",
-        "invisible-playwright",
+        "invisible-playwright", "playwright_firefox", "playwright-firefox",
+        "firefox", "firefox_http", "firefox-http", "auto",
     }
+
+
+FIREFOX_BROWSER_MODES = {
+    "playwright_firefox", "playwright-firefox", "firefox",
+    "firefox_http", "firefox-http", "auto",
+}
 
 
 def _browser_allowed_in_ci():
@@ -335,8 +344,15 @@ def _download_apkmirror_browser(mirror, cfg, version, arch, output, file_type):
             "APKMirror browser mode requires browser_page_url or "
             "APKMIRROR_BROWSER_PAGE_URL"
         )
+    browser_mode = str(
+        mirror.get("browser") or os.getenv("APKMIRROR_BROWSER", "invisible_playwright")
+    ).strip().lower()
+    firefox_mode = browser_mode in FIREFOX_BROWSER_MODES
     headless = _bool_setting(
-        mirror, "browser_headless", "APKMIRROR_BROWSER_HEADLESS", False
+        mirror,
+        "browser_headless",
+        "APKMIRROR_FIREFOX_HEADLESS" if firefox_mode else "APKMIRROR_BROWSER_HEADLESS",
+        False,
     )
     profile_dir = mirror.get("browser_profile_dir") or os.getenv(
         "APKMIRROR_BROWSER_PROFILE_DIR", ""
@@ -358,15 +374,70 @@ def _download_apkmirror_browser(mirror, cfg, version, arch, output, file_type):
     poll_interval = _float_setting(
         mirror, "browser_poll_interval", "APKMIRROR_BROWSER_POLL_INTERVAL", 4.0, 0.1, 30.0
     )
+    challenge_timeout = _float_setting(
+        mirror,
+        "browser_challenge_timeout",
+        "APKMIRROR_BROWSER_CHALLENGE_TIMEOUT",
+        page_timeout,
+        10.0,
+        300.0,
+    )
+    max_challenge_solves = _int_setting(
+        mirror,
+        "browser_max_challenge_solves",
+        "APKMIRROR_BROWSER_MAX_CHALLENGE_SOLVES",
+        2,
+        1,
+        5,
+    )
     humanize = _bool_setting(
         mirror, "browser_humanize", "APKMIRROR_BROWSER_HUMANIZE", True
     )
     close_vignette = _bool_setting(
         mirror, "browser_close_vignette", "APKMIRROR_BROWSER_CLOSE_VIGNETTE", True
     )
+    if firefox_mode:
+        clearance_timeout = _float_setting(
+            mirror,
+            "browser_clearance_timeout",
+            "APKMIRROR_BROWSER_CLEARANCE_TIMEOUT",
+            180.0,
+            30.0,
+            600.0,
+        )
+        firefox_bin = (
+            mirror.get("browser_firefox_bin")
+            or os.getenv("APKMIRROR_FIREFOX_BIN")
+            or None
+        )
+        print(
+            f"[APKMirror] stock-Firefox clearance + Playwright mode: {page_url} "
+            f"(clearance={clearance_timeout:g}s, wait={initial_wait:g}s, "
+            f"challenge={challenge_timeout:g}s, timeout={download_timeout:g}s)",
+            file=sys.stderr,
+        )
+        download_with_playwright_firefox(
+            page_url,
+            output,
+            expected_extension=_browser_file_extension(file_type),
+            clearance_timeout=clearance_timeout,
+            firefox_bin=firefox_bin,
+            headless=headless,
+            profile_dir=profile_dir or None,
+            initial_wait=initial_wait,
+            page_timeout=page_timeout,
+            download_timeout=download_timeout,
+            poll_interval=poll_interval,
+            challenge_timeout=challenge_timeout,
+            max_challenge_solves=max_challenge_solves,
+            close_vignette=close_vignette,
+        )
+        return version
+
     print(
-        f"[APKMirror] invisible_playwright browser mode: {page_url} "
-        f"(headless={headless}, wait={initial_wait:g}s, timeout={download_timeout:g}s)",
+        f"[APKMirror] Playwright browser mode with Turnstile solver: {page_url} "
+        f"(headless={headless}, wait={initial_wait:g}s, "
+        f"challenge={challenge_timeout:g}s, timeout={download_timeout:g}s)",
         file=sys.stderr,
     )
     download_with_invisible_playwright(
@@ -381,6 +452,8 @@ def _download_apkmirror_browser(mirror, cfg, version, arch, output, file_type):
         page_timeout=page_timeout,
         download_timeout=download_timeout,
         poll_interval=poll_interval,
+        challenge_timeout=challenge_timeout,
+        max_challenge_solves=max_challenge_solves,
         close_vignette=close_vignette,
     )
     return version
@@ -447,7 +520,7 @@ def download_from_mirror(kind, cfg, arch, version, output, *, timeout=30.0):
                 browser_type,
             )
         print(
-            "[APKMirror] invisible_playwright browser mode is disabled in CI; "
+            "[APKMirror] Playwright browser mode is disabled in CI; "
             "using the native apkd provider",
             file=sys.stderr,
         )

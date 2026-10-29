@@ -7,6 +7,7 @@ from unittest.mock import patch
 
 from tools.apkmirror_browser import (
     APKMirrorBrowserError,
+    _download_files,
     dismiss_google_vignette,
     download_with_invisible_playwright,
 )
@@ -91,17 +92,22 @@ class _FakeContext:
     def __init__(self, page):
         self.page = page
         self.pages = [page]
+        self.scripts = []
 
     def new_page(self):
         return self.page
+
+    def add_init_script(self, script):
+        self.scripts.append(script)
 
 
 class _FakeBrowser:
     def __init__(self, page):
         self.page = page
+        self.context = _FakeContext(page)
 
     def __enter__(self):
-        return _FakeContext(self.page)
+        return self.context
 
     def __exit__(self, *args):
         return False
@@ -137,12 +143,13 @@ class APKMirrorBrowserTests(unittest.TestCase):
                 on_click=lambda: write_package(source_holder["dir"]),
             )
             page = _FakePage(button)
+            browser = _FakeBrowser(page)
 
             def browser_factory(**kwargs):
                 self.assertEqual(kwargs["headless"], False)
                 self.assertEqual(kwargs["humanize"], True)
                 source_holder["dir"] = kwargs["extra_prefs"]["browser.download.dir"]
-                return _FakeBrowser(page)
+                return browser
 
             result = download_with_invisible_playwright(
                 "https://www.apkmirror.com/apk/pinterest/variant-2-android-apk-download/",
@@ -160,6 +167,8 @@ class APKMirrorBrowserTests(unittest.TestCase):
             self.assertTrue(destination.is_file())
             self.assertEqual(result["bytes"], destination.stat().st_size)
             self.assertEqual(result["vignette_dismissed"], False)
+            self.assertEqual(len(browser.context.scripts), 1)
+            self.assertIn("attachShadow", browser.context.scripts[0])
 
     def test_browser_flow_rejects_non_apkmirror_url(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -229,6 +238,17 @@ class APKMirrorBrowserTests(unittest.TestCase):
         self.assertEqual(result, "14.34.0")
         browser.assert_called_once()
         provider.assert_not_called()
+
+
+    def test_download_scan_accepts_playwright_guid_files_only(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            guid = root / "eee2d365-b3b8-41f7-b524-be6bf272558e"
+            guid.write_bytes(b"x" * 2_000_000)
+            (root / "notes.zip").write_bytes(b"x" * 2_000_000)
+            (root / "small.apk").write_bytes(b"x")
+            files = _download_files(root)
+        self.assertEqual([path.name for path in files], [guid.name])
 
 
 if __name__ == "__main__":

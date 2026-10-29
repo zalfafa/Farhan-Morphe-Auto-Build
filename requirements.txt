@@ -1,6 +1,7 @@
 beautifulsoup4==4.15.0
 curl_cffi==0.16.3
 playwright==1.64.1
+python-xlib==0.33
 invisible-playwright==0.41.0
 playwright-captcha==0.1.5
 apkd @ git+https://github.com/zalfafa/apkd@29606ea169c84450f88f0b7e62abb7a65fdeaaab
