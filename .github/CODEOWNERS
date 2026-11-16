@@ -1,5 +1,0 @@
-# Keep CI/security-sensitive changes visible for repository owner review.
-.github/workflows/ @Fahry-a
-.github/dependabot.yml @Fahry-a
-tools/ @Fahry-a
-requirements.txt @Fahry-a
