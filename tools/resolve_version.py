@@ -37,18 +37,52 @@ def parse_version_tuple(ver):
     return tuple(int(p) for p in parts) if parts else (0,)
 
 
+def _target_experimental(target):
+    """Experimental flag name differs between patches-list layouts."""
+    return bool(target.get("isExperimental", target.get("experimental", False)))
+
+
 def collect_target_versions(patches_list, package):
-    """Return a list of (version, is_experimental)."""
-    found = []
-    for patch in patches_list.get("patches", []):
-        for pkg in patch.get("compatiblePackages") or []:
-            if pkg.get("packageName") != package:
+    """Return (version, is_experimental) pairs for one package.
+
+    Two patches-list layouts are in use:
+
+    * classic Morphe/ReVanced: ``compatiblePackages`` is a list of
+      ``{"packageName", "targets": [{"version", "isExperimental"}]}``;
+    * HushGram: ``compatiblePackages`` maps a package name to version strings,
+      and the experimental flag lives in ``compatibility[].targets[]`` as
+      ``{"version", "experimental"}``.
+
+    Both are merged; a version counts as experimental if any entry says so.
+    """
+    found = {}
+
+    def add(version, experimental=False):
+        if version:
+            key = str(version)
+            found[key] = found.get(key, False) or bool(experimental)
+
+    for patch in patches_list.get("patches") or []:
+        if not isinstance(patch, dict):
+            continue
+        compatible = patch.get("compatiblePackages")
+        if isinstance(compatible, dict):
+            for version in compatible.get(package) or []:
+                add(version)
+        elif isinstance(compatible, list):
+            for pkg in compatible:
+                if not isinstance(pkg, dict) or pkg.get("packageName") != package:
+                    continue
+                for target in pkg.get("targets") or []:
+                    if isinstance(target, dict):
+                        add(target.get("version"), _target_experimental(target))
+        for compat in patch.get("compatibility") or []:
+            if not isinstance(compat, dict) or compat.get("packageName") != package:
                 continue
-            for target in pkg.get("targets") or []:
-                ver = target.get("version")
-                if ver:
-                    found.append((ver, bool(target.get("isExperimental"))))
-    return found
+            for target in compat.get("targets") or []:
+                if isinstance(target, dict):
+                    add(target.get("version"), _target_experimental(target))
+    return list(found.items())
 
 
 def pick_supported_version(targets, allow_experimental=False):
@@ -59,7 +93,7 @@ def pick_supported_version(targets, allow_experimental=False):
     # deduplicate, pick the highest version tuple
     uniq = {}
     for ver, exp in pool:
-        uniq[ver] = uniq.get(ver, exp) and exp
+        uniq[ver] = uniq.get(ver, exp) or exp
     best = sorted(uniq.keys(), key=parse_version_tuple, reverse=True)[0]
     return best, uniq[best]
 
