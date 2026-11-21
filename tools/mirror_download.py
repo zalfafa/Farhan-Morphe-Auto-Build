@@ -13,6 +13,7 @@ import json
 import os
 import re
 import sys
+import time
 from pathlib import Path
 
 try:
@@ -44,6 +45,27 @@ except ModuleNotFoundError:
 SUPPORTED_MIRRORS = tuple(PROVIDERS)
 
 _BUNDLE_FILE_TYPES = ("xapk", "apkm", "apks")
+_RETRY_DELAY = 1.0
+
+
+def _retry(fn, attempts, label):
+    """Retry transient provider failures once or twice before giving up.
+
+    Only network calls are wrapped: a wrong version or file_type is a
+    deterministic config error and is raised by the caller without a retry.
+    """
+    attempts = max(1, int(attempts))
+    for attempt in range(1, attempts + 1):
+        try:
+            return fn()
+        except ImportError:
+            raise
+        except Exception as exc:
+            if attempt == attempts:
+                raise RuntimeError(
+                    f"{label} failed after {attempts} attempts: {exc}"
+                ) from exc
+            time.sleep(_RETRY_DELAY * attempt)
 
 
 def mirror_file_type(cfg, kind):
@@ -467,11 +489,13 @@ def _get_provider(kind, slug_map=None):
     return get_provider(kind)
 
 
-def download_from_mirror(kind, cfg, arch, version, output, *, timeout=30.0):
+def download_from_mirror(kind, cfg, arch, version, output, *, timeout=30.0,
+                         attempts=1):
     """Resolve exact version via apkd and download it to output.
 
     ``timeout`` is part of the request rather than a process-level setting, so
     the same helper is useful for both CI jobs and long-running local audits.
+    ``attempts`` bounds transient resolve/download retries per mirror.
     """
     normalized = str(kind or "").lower()
     if normalized not in SUPPORTED_MIRRORS:
@@ -553,7 +577,11 @@ def download_from_mirror(kind, cfg, arch, version, output, *, timeout=30.0):
                                      dpi=dpi, min_sdk=min_sdk, timeout=timeout,
                                      app_slug=app_slug, app_id=app_id)
             try:
-                artifact = provider.resolve_request(request)
+                artifact = _retry(
+                    lambda req=request: provider.resolve_request(req),
+                    attempts,
+                    f"apkmirror resolve {package} {version} arch={candidate}",
+                )
             except Exception as exc:
                 errors.append(f"arch={candidate}: {exc}")
                 continue
@@ -577,7 +605,11 @@ def download_from_mirror(kind, cfg, arch, version, output, *, timeout=30.0):
         request = _build_request(package, version, effective_arch, prefer_xapk,
                                  timeout=timeout, app_slug=app_slug, app_id=app_id)
         try:
-            artifact = provider.resolve_request(request)
+            artifact = _retry(
+                lambda: provider.resolve_request(request),
+                attempts,
+                f"{normalized} resolve {package} {version}",
+            )
         except ImportError:
             raise
         except Exception as exc:
@@ -602,7 +634,13 @@ def download_from_mirror(kind, cfg, arch, version, output, *, timeout=30.0):
 
     tmp = Path(output)
     tmp.parent.mkdir(parents=True, exist_ok=True)
-    provider.download(artifact, tmp)
+
+    def download_once():
+        tmp.unlink(missing_ok=True)
+        return provider.download(artifact, tmp)
+
+    _retry(download_once, attempts,
+           f"{normalized} download {package} {version}")
     return artifact.version or version
 
 
@@ -612,6 +650,9 @@ def main():
     p.add_argument("--arch", required=True)
     p.add_argument("--exact-version", required=True)
     p.add_argument("--output", default="base.apk")
+    p.add_argument("--attempts", type=int,
+                   default=_int_setting({}, "attempts", "MIRROR_DOWNLOAD_ATTEMPTS", 2, 1, 5),
+                   help="resolve/download attempts per mirror (default 2)")
     args = p.parse_args()
 
     with open(args.config) as fh:
@@ -633,7 +674,8 @@ def main():
             output.unlink(missing_ok=True)
             print(f"== Trying {kind} for {cfg['package']} {args.exact_version} ==")
             version = download_from_mirror(kind, cfg, args.arch,
-                                           args.exact_version, tmp)
+                                           args.exact_version, tmp,
+                                           attempts=args.attempts)
             validate_package(
                 tmp,
                 mirror_type,
@@ -651,15 +693,22 @@ def main():
                     fh.write(f"download_source={kind}\n")
             return
         except Exception as exc:
-            errors.append(f"{kind}: {exc}")
-            print(f"FAILED {kind}: {exc}", file=sys.stderr)
+            errors.append(
+                f"{kind} ({mirror_type}, arch={args.arch}): {exc}"
+            )
+            print(f"FAILED {kind} ({mirror_type}, arch={args.arch}): {exc}",
+                  file=sys.stderr)
             if tmp is not None:
                 try:
                     Path(tmp).unlink()
                 except FileNotFoundError:
                     pass
 
-    print("All configured APK mirrors failed:", file=sys.stderr)
+    print(
+        f"All configured APK mirrors failed for {cfg['package']} "
+        f"{args.exact_version} arch={args.arch}:",
+        file=sys.stderr,
+    )
     for error in errors:
         print(f"  - {error}", file=sys.stderr)
     sys.exit(1)

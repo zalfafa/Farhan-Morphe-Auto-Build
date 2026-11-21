@@ -153,6 +153,73 @@ class MirrorDownloaderTests(unittest.TestCase):
         fake, _, _ = self._run_provider("apkpure", file_type="xapk")
         self.assertTrue(fake.seen_request.prefer_xapk)
 
+    def test_download_from_mirror_instagram_concrete_abi_bundle(self):
+        cfg = _cfg(
+            [{"type": "apkpure"}], file_type="apkm",
+            archs=[{"name": "arm64"}, {"name": "arm32"}],
+            package="com.instagram.android",
+        )
+        for arch in ("arm64", "arm32"):
+            with self.subTest(arch=arch):
+                artifact = Artifact(
+                    "apkpure", cfg["package"], "456.0.0.53.78",
+                    "https://example.test/base.apkm", ".apkm", arch,
+                )
+                fake = FakeProvider(artifact)
+                with tempfile.TemporaryDirectory() as td:
+                    output = str(Path(td) / "base.apkm")
+                    with patch("tools.mirror_download._get_provider", return_value=fake):
+                        result = download_from_mirror(
+                            "apkpure", cfg, arch, "456.0.0.53.78", output,
+                        )
+                    self.assertEqual(result, "456.0.0.53.78")
+                    self.assertEqual(fake.seen_request.arch, arch)
+                    self.assertTrue(fake.seen_request.prefer_xapk)
+                    self.assertTrue(Path(output).is_file())
+
+    def test_transient_resolve_failure_is_retried(self):
+        cfg = _cfg([{"type": "apkpure"}])
+        fake = FakeProvider(Artifact(
+            "apkpure", cfg["package"], "1.2.3",
+            "https://example.test/a.apk", ".apk", "universal",
+        ))
+        calls = []
+        original_resolve = fake.resolve_request
+
+        def flaky(request):
+            calls.append(request)
+            if len(calls) == 1:
+                raise OSError("temporary network failure")
+            return original_resolve(request)
+
+        fake.resolve_request = flaky
+        with tempfile.TemporaryDirectory() as td:
+            output = str(Path(td) / "out.apk")
+            with patch("tools.mirror_download._get_provider", return_value=fake), \
+                 patch("tools.mirror_download.time.sleep"):
+                result = download_from_mirror(
+                    "apkpure", cfg, "universal", "1.2.3", output, attempts=2,
+                )
+        self.assertEqual(result, "1.2.3")
+        self.assertEqual(len(calls), 2)
+
+    def test_retry_exhaustion_reports_attempts(self):
+        cfg = _cfg([{"type": "apkpure"}])
+        fake = FakeProvider(None)
+
+        def always_fails(request):
+            raise OSError("offline")
+
+        fake.resolve_request = always_fails
+        with tempfile.TemporaryDirectory() as td:
+            with patch("tools.mirror_download._get_provider", return_value=fake), \
+                 patch("tools.mirror_download.time.sleep"):
+                with self.assertRaisesRegex(RuntimeError, "failed after 2 attempts"):
+                    download_from_mirror(
+                        "apkpure", cfg, "universal", "1.2.3",
+                        str(Path(td) / "out.apk"), attempts=2,
+                    )
+
     def test_mirror_download_main_publishes_actual_bundle_path(self):
         import os
         from unittest.mock import patch as mock_patch

@@ -16,7 +16,7 @@ Configuration-driven GitHub Actions automation for building Morphe-patched Andro
 | Pinterest | com.pinterest | browzomje/browzomje-patches | APKMirror → APKCombo → APKPure → Aptoide | Universal | Default |
 | Advanced Download Manager | com.dv.adm | arandomhooman/hoomans-morphe-patches | APKMirror → APKPure → APKCombo → Aptoide | Universal | Default |
 | X / Twitter | com.twitter.android | crimera/piko | APKMirror → APKPure → APKCombo → Aptoide | Universal | Default |
-| Instagram | com.instagram.android | Fahry-a/piko | APKPure → APKMirror → APKCombo → Aptoide | ARM64, ARM32 | Default |
+| Instagram | com.instagram.android | SysAdminDoc/HushGram | APKPure → APKMirror → APKCombo → Aptoide | ARM64, ARM32 | Default |
 
 Brave assets:
 

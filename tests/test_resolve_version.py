@@ -25,6 +25,38 @@ class ResolveVersionTests(unittest.TestCase):
             [("1.0.0", False), ("2.0.0", True)],
         )
 
+    def test_collect_targets_hushgram_layout(self):
+        data = {
+            "patches": [{
+                "compatiblePackages": {"com.example.app": ["3.0.0"]},
+                "compatibility": [{
+                    "packageName": "com.example.app",
+                    "targets": [
+                        {"version": "3.0.0", "experimental": False},
+                        {"version": "4.0.0", "experimental": True},
+                    ],
+                }],
+            }]
+        }
+        self.assertEqual(
+            collect_target_versions(data, "com.example.app"),
+            [("3.0.0", False), ("4.0.0", True)],
+        )
+
+    def test_experimental_flag_from_any_entry_wins(self):
+        data = {
+            "patches": [{
+                "compatiblePackages": {"com.example.app": ["5.0.0"]},
+                "compatibility": [{
+                    "packageName": "com.example.app",
+                    "targets": [{"version": "5.0.0", "experimental": True}],
+                }],
+            }]
+        }
+        targets = collect_target_versions(data, "com.example.app")
+        self.assertEqual(targets, [("5.0.0", True)])
+        self.assertEqual(pick_supported_version(targets), ("5.0.0", True))
+
     def test_prefers_highest_stable(self):
         self.assertEqual(
             pick_supported_version([("1.0.0", False), ("2.0.0", True), ("1.5.0", False)]),

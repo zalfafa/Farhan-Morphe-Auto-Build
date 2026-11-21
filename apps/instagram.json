@@ -2,7 +2,7 @@
   "id": "instagram",
   "display_name": "Instagram",
   "package": "com.instagram.android",
-  "patch_repo": "zalfafa/piko",
+  "patch_repo": "SysAdminDoc/HushGram",
   "allow_experimental": false,
   "source": {
     "type": "mirrors",
